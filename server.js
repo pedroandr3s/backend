@@ -18,6 +18,7 @@ const dbConfig = {
         rejectUnauthorized: false
     }
 };
+const pool = mysql.createPool(dbConfig);
 
 app.use(cors({
   origin: [
