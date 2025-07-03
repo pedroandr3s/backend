@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 
 // Configuración de Railway MySQL usando variables de entorno
 const dbConfig = {
