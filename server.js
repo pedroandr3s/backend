@@ -20,17 +20,16 @@ const dbConfig = {
 };
 
 // Crear pool de conexiones
-const pool = mysql.createPool(dbConfig);
+const cors = require('cors');
 
-// Middlewares - INCLUIR TU URL DE VERCEL
 app.use(cors({
-    origin: [
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'https://datos-github-io-umber.vercel.app',  // ← Tu Vercel URL
-        'https://*.vercel.app'  // Para cualquier subdominio de Vercel
-    ],
-    credentials: true
+  origin: [
+    'https://datos-github-io-umber.vercel.app', // Tu dominio de Vercel
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:8080'
+  ],
+  credentials: true
 }));
 
 app.use(express.json());
