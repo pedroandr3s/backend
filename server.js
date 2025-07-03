@@ -19,9 +19,6 @@ const dbConfig = {
     }
 };
 
-// Crear pool de conexiones
-const cors = require('cors');
-
 app.use(cors({
   origin: [
     'https://datos-github-io-umber.vercel.app', // Tu dominio de Vercel
