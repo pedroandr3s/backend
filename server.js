@@ -858,6 +858,158 @@ app.get('/api/nodos', async (req, res) => {
         res.status(500).json({ error: 'Error obteniendo nodos' });
     }
 });
+app.get('/api/nodo-tipos', async (req, res) => {
+    try {
+        console.log('🔧 Obteniendo tipos de nodos...');
+        
+        const [rows] = await pool.execute(`
+            SELECT tipo, descripcion 
+            FROM nodo_tipo 
+            ORDER BY tipo ASC
+        `);
+        
+        // Formatear para compatibilidad con frontend
+        const nodoTipos = rows.map(tipo => ({
+            id: tipo.tipo,           // Para compatibilidad
+            tipo: tipo.tipo,         // ID original
+            descripcion: tipo.descripcion
+        }));
+        
+        console.log('✅ Tipos de nodos obtenidos:', nodoTipos.length);
+        res.json(nodoTipos);
+    } catch (error) {
+        console.error('💥 Error obteniendo tipos de nodos:', error);
+        res.status(500).json({ error: 'Error obteniendo tipos de nodos' });
+    }
+});
+
+// POST - Crear nuevo tipo de nodo (opcional)
+app.post('/api/nodo-tipos', async (req, res) => {
+    try {
+        const { descripcion } = req.body;
+        
+        console.log('➕ Creando nuevo tipo de nodo:', { descripcion });
+        
+        if (!descripcion || !descripcion.trim()) {
+            return res.status(400).json({ 
+                error: 'La descripción es requerida' 
+            });
+        }
+        
+        // Insertar nuevo tipo de nodo
+        const [result] = await pool.execute(`
+            INSERT INTO nodo_tipo (descripcion) 
+            VALUES (?)
+        `, [descripcion.trim()]);
+        
+        console.log('✅ Tipo de nodo creado exitosamente:', result.insertId);
+        
+        res.status(201).json({ 
+            id: result.insertId,
+            tipo: result.insertId,
+            descripcion: descripcion.trim(),
+            message: 'Tipo de nodo creado exitosamente'
+        });
+        
+    } catch (error) {
+        console.error('💥 Error creando tipo de nodo:', error);
+        res.status(500).json({ 
+            error: 'Error creando tipo de nodo',
+            details: error.message 
+        });
+    }
+});
+
+// PUT - Actualizar tipo de nodo (opcional)
+app.put('/api/nodo-tipos/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { descripcion } = req.body;
+        
+        console.log(`✏️ Actualizando tipo de nodo ${id}:`, { descripcion });
+        
+        // Verificar que el tipo de nodo existe
+        const [tipoExists] = await pool.execute('SELECT tipo FROM nodo_tipo WHERE tipo = ?', [id]);
+        if (tipoExists.length === 0) {
+            return res.status(404).json({ error: 'Tipo de nodo no encontrado' });
+        }
+        
+        if (!descripcion || !descripcion.trim()) {
+            return res.status(400).json({ 
+                error: 'La descripción es requerida' 
+            });
+        }
+        
+        // Actualizar tipo de nodo
+        await pool.execute(`
+            UPDATE nodo_tipo 
+            SET descripcion = ?
+            WHERE tipo = ?
+        `, [descripcion.trim(), id]);
+        
+        console.log('✅ Tipo de nodo actualizado:', id);
+        res.json({ 
+            message: 'Tipo de nodo actualizado correctamente',
+            id: parseInt(id),
+            descripcion: descripcion.trim()
+        });
+        
+    } catch (error) {
+        console.error('💥 Error actualizando tipo de nodo:', error);
+        res.status(500).json({ 
+            error: 'Error actualizando tipo de nodo',
+            details: error.message 
+        });
+    }
+});
+
+// DELETE - Eliminar tipo de nodo (opcional)
+app.delete('/api/nodo-tipos/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        console.log(`🗑️ Eliminando tipo de nodo ${id}`);
+        
+        // Verificar que el tipo de nodo existe
+        const [tipoExists] = await pool.execute('SELECT tipo, descripcion FROM nodo_tipo WHERE tipo = ?', [id]);
+        if (tipoExists.length === 0) {
+            return res.status(404).json({ error: 'Tipo de nodo no encontrado' });
+        }
+        
+        // Verificar si hay nodos que usan este tipo
+        const [nodosAsociados] = await pool.execute('SELECT COUNT(*) as count FROM nodo WHERE tipo = ?', [id]);
+        
+        if (nodosAsociados[0].count > 0) {
+            return res.status(400).json({ 
+                error: `No se puede eliminar el tipo de nodo porque hay ${nodosAsociados[0].count} nodo(s) que lo utilizan.`
+            });
+        }
+        
+        // Eliminar tipo de nodo
+        await pool.execute('DELETE FROM nodo_tipo WHERE tipo = ?', [id]);
+        
+        console.log('✅ Tipo de nodo eliminado:', id);
+        res.json({ 
+            message: `Tipo de nodo "${tipoExists[0].descripcion}" eliminado correctamente`,
+            id: parseInt(id)
+        });
+        
+    } catch (error) {
+        console.error('💥 Error eliminando tipo de nodo:', error);
+        
+        // Error específico para foreign key constraint
+        if (error.code === 'ER_ROW_IS_REFERENCED_2') {
+            return res.status(400).json({ 
+                error: 'No se puede eliminar el tipo de nodo porque tiene nodos asociados'
+            });
+        }
+        
+        res.status(500).json({ 
+            error: 'Error eliminando tipo de nodo',
+            details: error.message 
+        });
+    }
+});
 
 // =============================================
 // RUTAS PARA MENSAJES
