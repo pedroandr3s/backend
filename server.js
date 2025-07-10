@@ -585,6 +585,67 @@ app.post('/api/colmenas/:id/ubicaciones', async (req, res) => {
             details: error.message 
         });
     }
+    app.get('/api/colmenas/:id/nodos', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        console.log(`🔌 Obteniendo nodos para colmena ${id}`);
+        
+        // Verificar que la colmena existe
+        const [colmenaExists] = await pool.execute('SELECT id FROM colmena WHERE id = ?', [id]);
+        if (colmenaExists.length === 0) {
+            return res.status(404).json({ error: 'Colmena no encontrada' });
+        }
+        
+        // Obtener nodos asociados a esta colmena
+        const [nodos] = await pool.execute(`
+            SELECT n.id, n.descripcion, n.tipo,
+                   nt.descripcion as tipo_descripcion,
+                   nc.fecha as fecha_asociacion
+            FROM nodo_colmena nc
+            JOIN nodo n ON nc.nodo_id = n.id
+            LEFT JOIN nodo_tipo nt ON n.tipo = nt.tipo
+            WHERE nc.colmena_id = ?
+            ORDER BY nc.fecha DESC
+        `, [id]);
+        
+        console.log(`✅ Nodos encontrados para colmena ${id}:`, nodos.length);
+        res.json(nodos);
+        
+    } catch (error) {
+        console.error('💥 Error obteniendo nodos de colmena:', error);
+        res.status(500).json({ 
+            error: 'Error obteniendo nodos de la colmena',
+            details: error.message 
+        });
+    }
+});
+
+// OPCIONAL: También puedes agregar este endpoint para obtener ubicaciones específicas
+app.get('/api/colmenas/:id/ubicaciones', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        console.log(`📍 Obteniendo ubicaciones para colmena ${id}`);
+        
+        const [ubicaciones] = await pool.execute(`
+            SELECT id, latitud, longitud, descripcion, comuna, fecha
+            FROM colmena_ubicacion 
+            WHERE colmena_id = ?
+            ORDER BY fecha DESC
+        `, [id]);
+        
+        console.log(`✅ Ubicaciones encontradas para colmena ${id}:`, ubicaciones.length);
+        res.json(ubicaciones);
+        
+    } catch (error) {
+        console.error('💥 Error obteniendo ubicaciones:', error);
+        res.status(500).json({ 
+            error: 'Error obteniendo ubicaciones',
+            details: error.message 
+        });
+    }
+});
 });
 // =============================================
 // RUTAS PARA NODOS
