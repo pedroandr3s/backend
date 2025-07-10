@@ -314,114 +314,104 @@ app.get('/api/colmenas', async (req, res) => {
     }
 });
 
-// AGREGA ESTOS ENDPOINTS A TU server.js (después de las rutas existentes de colmenas)
+// ASEGÚRATE DE QUE TIENES ESTE ENDPOINT EN TU server.js
+// (debe estar ANTES de los endpoints con parámetros como /:id)
 
 // =============================================
-// ENDPOINTS PARA UBICACIONES DE COLMENAS
+// RUTAS PARA COLMENAS - ORDEN IMPORTANTE
 // =============================================
 
-// POST - Agregar ubicación a una colmena
-app.post('/api/colmenas/:id/ubicaciones', async (req, res) => {
+// GET - Obtener todas las colmenas (YA LO TIENES)
+app.get('/api/colmenas', async (req, res) => {
     try {
-        const { id } = req.params;
-        const { latitud, longitud, descripcion, comuna } = req.body;
+        console.log('🏠 Obteniendo colmenas...');
         
-        console.log(`📍 Agregando ubicación a colmena ${id}:`, req.body);
+        const [rows] = await pool.execute(`
+            SELECT c.id, c.descripcion, c.dueno,
+                   u.nombre as dueno_nombre, u.apellido as dueno_apellido,
+                   cu.latitud, cu.longitud, cu.comuna, cu.descripcion as ubicacion_descripcion
+            FROM colmena c
+            LEFT JOIN usuario u ON c.dueno = u.id
+            LEFT JOIN colmena_ubicacion cu ON c.id = cu.colmena_id
+            ORDER BY c.id ASC
+        `);
         
-        // Verificar que la colmena existe
-        const [colmenaExists] = await pool.execute('SELECT id FROM colmena WHERE id = ?', [id]);
-        if (colmenaExists.length === 0) {
-            return res.status(404).json({ error: 'Colmena no encontrada' });
-        }
+        // Formatear para compatibilidad con frontend
+        const colmenas = rows.map(colmena => ({
+            id: colmena.id,
+            nombre: `Colmena #${colmena.id}`, // Generar nombre basado en ID
+            tipo: 'Langstroth', // Valor por defecto
+            descripcion: colmena.descripcion,
+            dueno: colmena.dueno,
+            dueno_nombre: colmena.dueno_nombre,
+            dueno_apellido: colmena.dueno_apellido,
+            apiario_id: null, // No existe en tu esquema
+            apiario_nombre: colmena.comuna, // Usar comuna como "apiario"
+            fecha_instalacion: new Date().toISOString(), // Temporalmente
+            activa: 1, // Asumir que están activas
+            latitud: colmena.latitud,
+            longitud: colmena.longitud,
+            ubicacion: colmena.ubicacion_descripcion,
+            comuna: colmena.comuna,
+            ubicacion_descripcion: colmena.ubicacion_descripcion
+        }));
+        
+        console.log('✅ Colmenas obtenidas:', colmenas.length);
+        res.json(colmenas);
+    } catch (error) {
+        console.error('💥 Error obteniendo colmenas:', error);
+        res.status(500).json({ error: 'Error obteniendo colmenas' });
+    }
+});
+
+// POST - Crear nueva colmena (ESTE ES EL QUE FALTA)
+app.post('/api/colmenas', async (req, res) => {
+    try {
+        console.log('➕ Creando nueva colmena con datos:', req.body);
+        
+        const { descripcion, dueno } = req.body;
         
         // Validar campos requeridos
-        if (!latitud || !longitud) {
-            return res.status(400).json({ error: 'Latitud y longitud son requeridos' });
+        if (!descripcion || !dueno) {
+            return res.status(400).json({ 
+                error: 'Descripción y dueño son obligatorios' 
+            });
         }
         
-        // Verificar si ya existe una ubicación para esta colmena
-        const [existingLocation] = await pool.execute(
-            'SELECT id FROM colmena_ubicacion WHERE colmena_id = ?', 
-            [id]
-        );
-        
-        if (existingLocation.length > 0) {
-            // Actualizar ubicación existente
-            await pool.execute(`
-                UPDATE colmena_ubicacion 
-                SET latitud = ?, longitud = ?, descripcion = ?, comuna = ?, fecha = CURRENT_TIMESTAMP
-                WHERE colmena_id = ?
-            `, [latitud, longitud, descripcion || null, comuna || null, id]);
-            
-            console.log('✅ Ubicación actualizada para colmena:', id);
-        } else {
-            // Crear nueva ubicación
-            await pool.execute(`
-                INSERT INTO colmena_ubicacion (colmena_id, latitud, longitud, descripcion, comuna) 
-                VALUES (?, ?, ?, ?, ?)
-            `, [id, latitud, longitud, descripcion || null, comuna || null]);
-            
-            console.log('✅ Nueva ubicación creada para colmena:', id);
+        // Verificar que el dueño existe
+        const [duenoExists] = await pool.execute('SELECT id FROM usuario WHERE id = ?', [dueno]);
+        if (duenoExists.length === 0) {
+            return res.status(400).json({ error: 'El usuario dueño no existe' });
         }
         
-        res.json({ 
-            message: 'Ubicación agregada/actualizada correctamente',
-            colmena_id: id
-        });
+        // Insertar nueva colmena
+        const [result] = await pool.execute(`
+            INSERT INTO colmena (descripcion, dueno) 
+            VALUES (?, ?)
+        `, [descripcion.trim(), parseInt(dueno)]);
+        
+        console.log('✅ Colmena creada exitosamente:', result.insertId);
+        
+        // Devolver la colmena creada con formato completo
+        const nuevaColmena = {
+            id: result.insertId,
+            descripcion: descripcion.trim(),
+            dueno: parseInt(dueno),
+            message: 'Colmena creada exitosamente'
+        };
+        
+        res.status(201).json(nuevaColmena);
         
     } catch (error) {
-        console.error('💥 Error agregando ubicación:', error);
+        console.error('💥 Error creando colmena:', error);
         res.status(500).json({ 
-            error: 'Error agregando ubicación',
+            error: 'Error creando colmena',
             details: error.message 
         });
     }
 });
 
-// GET - Obtener ubicaciones de una colmena
-app.get('/api/colmenas/:id/ubicaciones', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        const [ubicaciones] = await pool.execute(`
-            SELECT id, latitud, longitud, descripcion, comuna, fecha
-            FROM colmena_ubicacion 
-            WHERE colmena_id = ?
-            ORDER BY fecha DESC
-        `, [id]);
-        
-        res.json(ubicaciones);
-        
-    } catch (error) {
-        console.error('💥 Error obteniendo ubicaciones:', error);
-        res.status(500).json({ error: 'Error obteniendo ubicaciones' });
-    }
-});
-
-// GET - Obtener nodos asociados a una colmena
-app.get('/api/colmenas/:id/nodos', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        const [nodos] = await pool.execute(`
-            SELECT n.id, n.descripcion, n.tipo,
-                   nt.descripcion as tipo_descripcion,
-                   nc.fecha
-            FROM nodo_colmena nc
-            JOIN nodo n ON nc.nodo_id = n.id
-            LEFT JOIN nodo_tipo nt ON n.tipo = nt.tipo
-            WHERE nc.colmena_id = ?
-            ORDER BY nc.fecha DESC
-        `, [id]);
-        
-        res.json(nodos);
-        
-    } catch (error) {
-        console.error('💥 Error obteniendo nodos de colmena:', error);
-        res.status(500).json({ error: 'Error obteniendo nodos' });
-    }
-});
-
+// IMPORTANTE: Los endpoints con parámetros (:id) deben ir DESPUÉS
 // GET - Obtener detalle completo de una colmena
 app.get('/api/colmenas/:id', async (req, res) => {
     try {
@@ -536,6 +526,64 @@ app.delete('/api/colmenas/:id', async (req, res) => {
     } catch (error) {
         console.error('💥 Error eliminando colmena:', error);
         res.status(500).json({ error: 'Error eliminando colmena' });
+    }
+});
+
+// POST - Agregar ubicación a una colmena
+app.post('/api/colmenas/:id/ubicaciones', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { latitud, longitud, descripcion, comuna } = req.body;
+        
+        console.log(`📍 Agregando ubicación a colmena ${id}:`, req.body);
+        
+        // Verificar que la colmena existe
+        const [colmenaExists] = await pool.execute('SELECT id FROM colmena WHERE id = ?', [id]);
+        if (colmenaExists.length === 0) {
+            return res.status(404).json({ error: 'Colmena no encontrada' });
+        }
+        
+        // Validar campos requeridos
+        if (!latitud || !longitud) {
+            return res.status(400).json({ error: 'Latitud y longitud son requeridos' });
+        }
+        
+        // Verificar si ya existe una ubicación para esta colmena
+        const [existingLocation] = await pool.execute(
+            'SELECT id FROM colmena_ubicacion WHERE colmena_id = ?', 
+            [id]
+        );
+        
+        if (existingLocation.length > 0) {
+            // Actualizar ubicación existente
+            await pool.execute(`
+                UPDATE colmena_ubicacion 
+                SET latitud = ?, longitud = ?, descripcion = ?, comuna = ?, fecha = CURRENT_TIMESTAMP
+                WHERE colmena_id = ?
+            `, [latitud, longitud, descripcion || null, comuna || null, id]);
+            
+            console.log('✅ Ubicación actualizada para colmena:', id);
+        } else {
+            // Crear nueva ubicación
+            await pool.execute(`
+                INSERT INTO colmena_ubicacion (colmena_id, latitud, longitud, descripcion, comuna) 
+                VALUES (?, ?, ?, ?, ?)
+            `, [id, latitud, longitud, descripcion || null, comuna || null]);
+            
+            console.log('✅ Nueva ubicación creada para colmena:', id);
+        }
+        
+        res.json({ 
+            message: 'Ubicación agregada/actualizada correctamente',
+            colmena_id: id
+        });
+        
+    } catch (error) {
+        console.error('💥 Error agregando ubicación:', error);
+        res.status(500).json({ 
+            error: 'Error agregando ubicación',
+            details: error.message 
+        });
     }
 });
 // =============================================
