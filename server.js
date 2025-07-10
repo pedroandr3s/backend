@@ -261,7 +261,179 @@ app.post('/api/usuarios', async (req, res) => {
         });
     }
 });
+app.put('/api/usuarios/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { nombre, apellido, clave, rol } = req.body;
+        
+        console.log(`✏️ Actualizando usuario ${id}:`, req.body);
+        
+        // Verificar que el usuario existe
+        const [userExists] = await pool.execute('SELECT id FROM usuario WHERE id = ?', [id]);
+        if (userExists.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        
+        // Validar campos requeridos
+        if (!nombre || !apellido || !rol) {
+            return res.status(400).json({ 
+                error: 'Nombre, apellido y rol son obligatorios' 
+            });
+        }
+        
+        // Verificar que el rol existe
+        const [rolExists] = await pool.execute('SELECT rol FROM rol WHERE rol = ?', [rol]);
+        if (rolExists.length === 0) {
+            return res.status(400).json({ error: 'El rol especificado no existe' });
+        }
+        
+        // Preparar la consulta de actualización
+        let updateQuery;
+        let updateParams;
+        
+        if (clave && clave.trim()) {
+            // Actualizar con nueva clave
+            updateQuery = `
+                UPDATE usuario 
+                SET nombre = ?, apellido = ?, clave = ?, rol = ?
+                WHERE id = ?
+            `;
+            updateParams = [nombre.trim(), apellido.trim(), clave.trim(), parseInt(rol), id];
+        } else {
+            // Actualizar sin cambiar la clave
+            updateQuery = `
+                UPDATE usuario 
+                SET nombre = ?, apellido = ?, rol = ?
+                WHERE id = ?
+            `;
+            updateParams = [nombre.trim(), apellido.trim(), parseInt(rol), id];
+        }
+        
+        // Ejecutar actualización
+        await pool.execute(updateQuery, updateParams);
+        
+        console.log('✅ Usuario actualizado:', id);
+        
+        // Obtener el usuario actualizado para devolverlo
+        const [updatedUser] = await pool.execute(`
+            SELECT u.id, u.nombre, u.apellido, u.rol,
+                   r.descripcion as rol_nombre
+            FROM usuario u
+            LEFT JOIN rol r ON u.rol = r.rol
+            WHERE u.id = ?
+        `, [id]);
+        
+        res.json({ 
+            message: 'Usuario actualizado correctamente',
+            usuario: {
+                id: updatedUser[0].id,
+                nombre: updatedUser[0].nombre,
+                apellido: updatedUser[0].apellido,
+                email: updatedUser[0].nombre, // Mapear nombre a email para frontend
+                telefono: '', // No existe en tu esquema
+                fecha_registro: new Date().toISOString(),
+                rol_nombre: updatedUser[0].rol_nombre || 'Usuario',
+                rol: updatedUser[0].rol
+            }
+        });
+        
+    } catch (error) {
+        console.error('💥 Error actualizando usuario:', error);
+        res.status(500).json({ 
+            error: 'Error actualizando usuario',
+            details: process.env.NODE_ENV === 'development' ? error.message : 'Error interno'
+        });
+    }
+});
 
+// DELETE - Eliminar usuario
+app.delete('/api/usuarios/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        console.log(`🗑️ Eliminando usuario ${id}`);
+        
+        // Verificar que el usuario existe
+        const [userExists] = await pool.execute('SELECT id, nombre, apellido FROM usuario WHERE id = ?', [id]);
+        if (userExists.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        
+        const usuario = userExists[0];
+        
+        // Verificar si el usuario tiene colmenas asociadas
+        const [colmenasAsociadas] = await pool.execute('SELECT COUNT(*) as count FROM colmena WHERE dueno = ?', [id]);
+        
+        if (colmenasAsociadas[0].count > 0) {
+            return res.status(400).json({ 
+                error: `No se puede eliminar el usuario porque tiene ${colmenasAsociadas[0].count} colmena(s) asociada(s). Primero transfiere o elimina las colmenas.`
+            });
+        }
+        
+        // Eliminar usuario
+        await pool.execute('DELETE FROM usuario WHERE id = ?', [id]);
+        
+        console.log('✅ Usuario eliminado:', id);
+        res.json({ 
+            message: `Usuario "${usuario.nombre} ${usuario.apellido}" eliminado correctamente`,
+            id: parseInt(id)
+        });
+        
+    } catch (error) {
+        console.error('💥 Error eliminando usuario:', error);
+        
+        // Error específico para foreign key constraint
+        if (error.code === 'ER_ROW_IS_REFERENCED_2') {
+            return res.status(400).json({ 
+                error: 'No se puede eliminar el usuario porque tiene registros asociados (colmenas, etc.)'
+            });
+        }
+        
+        res.status(500).json({ 
+            error: 'Error eliminando usuario',
+            details: process.env.NODE_ENV === 'development' ? error.message : 'Error interno'
+        });
+    }
+});
+
+// GET - Obtener un usuario específico (opcional, útil para debug)
+app.get('/api/usuarios/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        console.log(`🔍 Obteniendo usuario ${id}`);
+        
+        const [rows] = await pool.execute(`
+            SELECT u.id, u.nombre, u.apellido, u.clave, u.rol,
+                   r.descripcion as rol_nombre
+            FROM usuario u 
+            LEFT JOIN rol r ON u.rol = r.rol 
+            WHERE u.id = ?
+        `, [id]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        
+        const usuario = {
+            id: rows[0].id,
+            nombre: rows[0].nombre,
+            apellido: rows[0].apellido,
+            email: rows[0].nombre, // Usar nombre como email temporalmente
+            telefono: '', // No existe en tu esquema
+            fecha_registro: new Date().toISOString(), // Temporalmente
+            rol_nombre: rows[0].rol_nombre || 'Usuario',
+            rol: rows[0].rol
+        };
+        
+        console.log('✅ Usuario obtenido:', usuario);
+        res.json(usuario);
+        
+    } catch (error) {
+        console.error('💥 Error obteniendo usuario:', error);
+        res.status(500).json({ error: 'Error obteniendo usuario' });
+    }
+});
 // TAMBIÉN AGREGA este endpoint para debug de logs en tiempo real:
 app.get('/api/debug/logs', (req, res) => {
     res.json({
