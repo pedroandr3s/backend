@@ -314,30 +314,230 @@ app.get('/api/colmenas', async (req, res) => {
     }
 });
 
-app.post('/api/colmenas', async (req, res) => {
+// AGREGA ESTOS ENDPOINTS A TU server.js (después de las rutas existentes de colmenas)
+
+// =============================================
+// ENDPOINTS PARA UBICACIONES DE COLMENAS
+// =============================================
+
+// POST - Agregar ubicación a una colmena
+app.post('/api/colmenas/:id/ubicaciones', async (req, res) => {
     try {
-        const { descripcion, dueno } = req.body;
+        const { id } = req.params;
+        const { latitud, longitud, descripcion, comuna } = req.body;
         
-        if (!descripcion || !dueno) {
-            return res.status(400).json({ error: 'Descripción y dueño son obligatorios' });
+        console.log(`📍 Agregando ubicación a colmena ${id}:`, req.body);
+        
+        // Verificar que la colmena existe
+        const [colmenaExists] = await pool.execute('SELECT id FROM colmena WHERE id = ?', [id]);
+        if (colmenaExists.length === 0) {
+            return res.status(404).json({ error: 'Colmena no encontrada' });
         }
         
-        const [result] = await pool.execute(`
-            INSERT INTO colmena (descripcion, dueno) 
-            VALUES (?, ?)
-        `, [descripcion, dueno]);
+        // Validar campos requeridos
+        if (!latitud || !longitud) {
+            return res.status(400).json({ error: 'Latitud y longitud son requeridos' });
+        }
         
-        console.log('✅ Colmena creada:', result.insertId);
+        // Verificar si ya existe una ubicación para esta colmena
+        const [existingLocation] = await pool.execute(
+            'SELECT id FROM colmena_ubicacion WHERE colmena_id = ?', 
+            [id]
+        );
+        
+        if (existingLocation.length > 0) {
+            // Actualizar ubicación existente
+            await pool.execute(`
+                UPDATE colmena_ubicacion 
+                SET latitud = ?, longitud = ?, descripcion = ?, comuna = ?, fecha = CURRENT_TIMESTAMP
+                WHERE colmena_id = ?
+            `, [latitud, longitud, descripcion || null, comuna || null, id]);
+            
+            console.log('✅ Ubicación actualizada para colmena:', id);
+        } else {
+            // Crear nueva ubicación
+            await pool.execute(`
+                INSERT INTO colmena_ubicacion (colmena_id, latitud, longitud, descripcion, comuna) 
+                VALUES (?, ?, ?, ?, ?)
+            `, [id, latitud, longitud, descripcion || null, comuna || null]);
+            
+            console.log('✅ Nueva ubicación creada para colmena:', id);
+        }
+        
         res.json({ 
-            id: result.insertId,
-            message: 'Colmena creada exitosamente'
+            message: 'Ubicación agregada/actualizada correctamente',
+            colmena_id: id
         });
+        
     } catch (error) {
-        console.error('💥 Error creando colmena:', error);
-        res.status(500).json({ error: 'Error creando colmena' });
+        console.error('💥 Error agregando ubicación:', error);
+        res.status(500).json({ 
+            error: 'Error agregando ubicación',
+            details: error.message 
+        });
     }
 });
 
+// GET - Obtener ubicaciones de una colmena
+app.get('/api/colmenas/:id/ubicaciones', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const [ubicaciones] = await pool.execute(`
+            SELECT id, latitud, longitud, descripcion, comuna, fecha
+            FROM colmena_ubicacion 
+            WHERE colmena_id = ?
+            ORDER BY fecha DESC
+        `, [id]);
+        
+        res.json(ubicaciones);
+        
+    } catch (error) {
+        console.error('💥 Error obteniendo ubicaciones:', error);
+        res.status(500).json({ error: 'Error obteniendo ubicaciones' });
+    }
+});
+
+// GET - Obtener nodos asociados a una colmena
+app.get('/api/colmenas/:id/nodos', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const [nodos] = await pool.execute(`
+            SELECT n.id, n.descripcion, n.tipo,
+                   nt.descripcion as tipo_descripcion,
+                   nc.fecha
+            FROM nodo_colmena nc
+            JOIN nodo n ON nc.nodo_id = n.id
+            LEFT JOIN nodo_tipo nt ON n.tipo = nt.tipo
+            WHERE nc.colmena_id = ?
+            ORDER BY nc.fecha DESC
+        `, [id]);
+        
+        res.json(nodos);
+        
+    } catch (error) {
+        console.error('💥 Error obteniendo nodos de colmena:', error);
+        res.status(500).json({ error: 'Error obteniendo nodos' });
+    }
+});
+
+// GET - Obtener detalle completo de una colmena
+app.get('/api/colmenas/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        console.log(`🔍 Obteniendo detalle de colmena ${id}`);
+        
+        // Obtener información básica de la colmena
+        const [colmenaData] = await pool.execute(`
+            SELECT c.id, c.descripcion, c.dueno,
+                   u.nombre as dueno_nombre, u.apellido as dueno_apellido
+            FROM colmena c
+            LEFT JOIN usuario u ON c.dueno = u.id
+            WHERE c.id = ?
+        `, [id]);
+        
+        if (colmenaData.length === 0) {
+            return res.status(404).json({ error: 'Colmena no encontrada' });
+        }
+        
+        // Obtener ubicación
+        const [ubicacionData] = await pool.execute(`
+            SELECT latitud, longitud, descripcion as ubicacion_descripcion, comuna
+            FROM colmena_ubicacion 
+            WHERE colmena_id = ?
+            ORDER BY fecha DESC
+            LIMIT 1
+        `, [id]);
+        
+        // Obtener nodos asociados
+        const [nodosData] = await pool.execute(`
+            SELECT n.id, n.descripcion, n.tipo,
+                   nt.descripcion as tipo_descripcion
+            FROM nodo_colmena nc
+            JOIN nodo n ON nc.nodo_id = n.id
+            LEFT JOIN nodo_tipo nt ON n.tipo = nt.tipo
+            WHERE nc.colmena_id = ?
+        `, [id]);
+        
+        const colmenaCompleta = {
+            ...colmenaData[0],
+            ...(ubicacionData[0] || {}),
+            nodos: nodosData
+        };
+        
+        console.log('✅ Detalle de colmena obtenido:', colmenaCompleta);
+        res.json(colmenaCompleta);
+        
+    } catch (error) {
+        console.error('💥 Error obteniendo detalle de colmena:', error);
+        res.status(500).json({ error: 'Error obteniendo detalle de colmena' });
+    }
+});
+
+// PUT - Actualizar colmena
+app.put('/api/colmenas/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { descripcion, dueno } = req.body;
+        
+        console.log(`✏️ Actualizando colmena ${id}:`, req.body);
+        
+        // Verificar que la colmena existe
+        const [colmenaExists] = await pool.execute('SELECT id FROM colmena WHERE id = ?', [id]);
+        if (colmenaExists.length === 0) {
+            return res.status(404).json({ error: 'Colmena no encontrada' });
+        }
+        
+        // Actualizar colmena
+        await pool.execute(`
+            UPDATE colmena 
+            SET descripcion = ?, dueno = ?
+            WHERE id = ?
+        `, [descripcion, dueno, id]);
+        
+        console.log('✅ Colmena actualizada:', id);
+        res.json({ 
+            message: 'Colmena actualizada correctamente',
+            id: parseInt(id)
+        });
+        
+    } catch (error) {
+        console.error('💥 Error actualizando colmena:', error);
+        res.status(500).json({ error: 'Error actualizando colmena' });
+    }
+});
+
+// DELETE - Eliminar colmena
+app.delete('/api/colmenas/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        console.log(`🗑️ Eliminando colmena ${id}`);
+        
+        // Verificar que la colmena existe
+        const [colmenaExists] = await pool.execute('SELECT id FROM colmena WHERE id = ?', [id]);
+        if (colmenaExists.length === 0) {
+            return res.status(404).json({ error: 'Colmena no encontrada' });
+        }
+        
+        // Eliminar en orden (por las foreign keys)
+        await pool.execute('DELETE FROM nodo_colmena WHERE colmena_id = ?', [id]);
+        await pool.execute('DELETE FROM colmena_ubicacion WHERE colmena_id = ?', [id]);
+        await pool.execute('DELETE FROM colmena WHERE id = ?', [id]);
+        
+        console.log('✅ Colmena eliminada:', id);
+        res.json({ 
+            message: 'Colmena eliminada correctamente',
+            id: parseInt(id)
+        });
+        
+    } catch (error) {
+        console.error('💥 Error eliminando colmena:', error);
+        res.status(500).json({ error: 'Error eliminando colmena' });
+    }
+});
 // =============================================
 // RUTAS PARA NODOS
 // =============================================
