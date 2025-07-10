@@ -170,28 +170,104 @@ app.get('/api/usuarios', async (req, res) => {
     }
 });
 
+// REEMPLAZA el endpoint POST /api/usuarios en tu server.js con este:
+
 app.post('/api/usuarios', async (req, res) => {
     try {
-        const { nombre, apellido, clave, rol = 2 } = req.body;
+        console.log('📝 Creando usuario con datos:', req.body);
         
-        if (!nombre || !apellido || !clave) {
-            return res.status(400).json({ error: 'Nombre, apellido y clave son obligatorios' });
+        // Extraer campos del frontend y mapear a tu esquema
+        const { 
+            nombre, 
+            apellido, 
+            email,        // El frontend envía email, pero usamos como nombre si no hay nombre
+            password,     // El frontend envía password, mapeamos a clave
+            clave,        // O puede enviar clave directamente
+            rol = 2       // Por defecto rol 2 (Apicultor)
+        } = req.body;
+        
+        // Determinar valores finales
+        const nombreFinal = nombre || email || 'Usuario';
+        const apellidoFinal = apellido || 'Apellido';
+        const claveFinal = clave || password || '1234';
+        
+        console.log('📝 Datos procesados:', {
+            nombre: nombreFinal,
+            apellido: apellidoFinal,
+            clave: claveFinal,
+            rol: rol
+        });
+        
+        // Validar campos requeridos
+        if (!nombreFinal || !apellidoFinal || !claveFinal) {
+            return res.status(400).json({ 
+                error: 'Nombre, apellido y contraseña son obligatorios',
+                received: req.body
+            });
         }
         
+        // Verificar que el rol existe
+        const [rolExists] = await pool.execute('SELECT rol FROM rol WHERE rol = ?', [rol]);
+        if (rolExists.length === 0) {
+            console.log('⚠️ Rol no existe, usando rol 2 por defecto');
+            rol = 2;
+        }
+        
+        // Insertar usuario
         const [result] = await pool.execute(`
             INSERT INTO usuario (nombre, apellido, clave, rol) 
             VALUES (?, ?, ?, ?)
-        `, [nombre, apellido, clave, rol]);
+        `, [nombreFinal, apellidoFinal, claveFinal, rol]);
         
-        console.log('✅ Usuario creado:', result.insertId);
-        res.json({ 
+        console.log('✅ Usuario creado exitosamente:', result.insertId);
+        
+        // Obtener el usuario creado para devolverlo
+        const [newUser] = await pool.execute(`
+            SELECT u.id, u.nombre, u.apellido, u.rol,
+                   r.descripcion as rol_nombre
+            FROM usuario u
+            LEFT JOIN rol r ON u.rol = r.rol
+            WHERE u.id = ?
+        `, [result.insertId]);
+        
+        res.status(201).json({ 
             id: result.insertId,
-            message: 'Usuario creado exitosamente'
+            message: 'Usuario creado exitosamente',
+            usuario: {
+                id: newUser[0].id,
+                nombre: newUser[0].nombre,
+                apellido: newUser[0].apellido,
+                email: newUser[0].nombre, // Mapear nombre a email para frontend
+                telefono: '', // No existe en tu esquema
+                fecha_registro: new Date().toISOString(),
+                rol_nombre: newUser[0].rol_nombre || 'Usuario'
+            }
         });
+        
     } catch (error) {
         console.error('💥 Error creando usuario:', error);
-        res.status(500).json({ error: 'Error creando usuario' });
+        
+        // Log detallado del error
+        console.error('Error details:', {
+            message: error.message,
+            code: error.code,
+            errno: error.errno,
+            sql: error.sql
+        });
+        
+        res.status(500).json({ 
+            error: 'Error creando usuario',
+            details: process.env.NODE_ENV === 'development' ? error.message : 'Error interno'
+        });
     }
+});
+
+// TAMBIÉN AGREGA este endpoint para debug de logs en tiempo real:
+app.get('/api/debug/logs', (req, res) => {
+    res.json({
+        message: 'Endpoint para debug. Revisa los logs del servidor.',
+        timestamp: new Date().toISOString()
+    });
 });
 
 // =============================================
