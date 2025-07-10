@@ -19,7 +19,187 @@ const dbConfig = {
     }
 };
 const pool = mysql.createPool(dbConfig);
+// AGREGA ESTA RUTA TEMPORAL A TU server.js (antes de las otras rutas)
 
+// =============================================
+// RUTA DE DEBUG - REMOVER DESPUÉS 
+// =============================================
+app.get('/api/debug/database', async (req, res) => {
+    try {
+        console.log('🔍 Iniciando debug de base de datos...');
+        
+        // Test 1: Conexión básica
+        const [testConnection] = await pool.execute('SELECT 1 as test');
+        console.log('✅ Conexión a BD exitosa');
+        
+        // Test 2: Verificar qué tablas existen
+        const [tables] = await pool.execute('SHOW TABLES');
+        console.log('📋 Tablas disponibles:', tables);
+        
+        // Test 3: Estructura de cada tabla principal
+        let structures = {};
+        
+        try {
+            const [colmenaStruct] = await pool.execute('DESCRIBE colmena');
+            structures.colmena = colmenaStruct;
+            console.log('🏠 Estructura tabla colmena:', colmenaStruct);
+        } catch (e) {
+            console.log('❌ Error tabla colmena:', e.message);
+            structures.colmena_error = e.message;
+        }
+        
+        try {
+            const [usuarioStruct] = await pool.execute('DESCRIBE usuario');
+            structures.usuario = usuarioStruct;
+            console.log('👤 Estructura tabla usuario:', usuarioStruct);
+        } catch (e) {
+            console.log('❌ Error tabla usuario:', e.message);
+            structures.usuario_error = e.message;
+        }
+        
+        try {
+            const [apiarioStruct] = await pool.execute('DESCRIBE apiario');
+            structures.apiario = apiarioStruct;
+            console.log('🏢 Estructura tabla apiario:', apiarioStruct);
+        } catch (e) {
+            console.log('❌ Error tabla apiario:', e.message);
+            structures.apiario_error = e.message;
+        }
+        
+        try {
+            const [mensajeStruct] = await pool.execute('DESCRIBE mensaje');
+            structures.mensaje = mensajeStruct;
+            console.log('💬 Estructura tabla mensaje:', mensajeStruct);
+        } catch (e) {
+            console.log('❌ Error tabla mensaje:', e.message);
+            structures.mensaje_error = e.message;
+        }
+        
+        // Test 4: Contar registros en cada tabla
+        let counts = {};
+        
+        try {
+            const [colmenaCount] = await pool.execute('SELECT COUNT(*) as count FROM colmena');
+            counts.colmena = colmenaCount[0].count;
+        } catch (e) {
+            counts.colmena_error = e.message;
+        }
+        
+        try {
+            const [usuarioCount] = await pool.execute('SELECT COUNT(*) as count FROM usuario');
+            counts.usuario = usuarioCount[0].count;
+        } catch (e) {
+            counts.usuario_error = e.message;
+        }
+        
+        try {
+            const [apiarioCount] = await pool.execute('SELECT COUNT(*) as count FROM apiario');
+            counts.apiario = apiarioCount[0].count;
+        } catch (e) {
+            counts.apiario_error = e.message;
+        }
+        
+        // Test 5: Probar query simple de colmenas
+        let sampleData = {};
+        
+        try {
+            const [simpleCols] = await pool.execute('SELECT * FROM colmena LIMIT 1');
+            sampleData.colmena_sample = simpleCols[0] || 'No hay datos';
+            console.log('📊 Datos muestra colmena:', simpleCols[0]);
+        } catch (e) {
+            console.log('❌ Error query simple colmena:', e.message);
+            sampleData.colmena_error = e.message;
+        }
+        
+        try {
+            const [simpleUsers] = await pool.execute('SELECT * FROM usuario LIMIT 1');
+            sampleData.usuario_sample = simpleUsers[0] || 'No hay datos';
+            console.log('📊 Datos muestra usuario:', simpleUsers[0]);
+        } catch (e) {
+            console.log('❌ Error query simple usuario:', e.message);
+            sampleData.usuario_error = e.message;
+        }
+        
+        const result = {
+            connection_test: testConnection[0],
+            available_tables: tables,
+            table_structures: structures,
+            record_counts: counts,
+            sample_data: sampleData,
+            timestamp: new Date().toISOString()
+        };
+        
+        console.log('🎯 Debug completo:', JSON.stringify(result, null, 2));
+        
+        res.json(result);
+        
+    } catch (error) {
+        console.error('💥 Error completo en debug:', error);
+        res.status(500).json({ 
+            error: error.message,
+            stack: error.stack 
+        });
+    }
+});
+
+// Test específico para colmenas con error detallado
+app.get('/api/debug/colmenas-detailed', async (req, res) => {
+    try {
+        console.log('🔍 Debug detallado de colmenas...');
+        
+        // Query más simple primero
+        console.log('Paso 1: Query básica SELECT * FROM colmena');
+        const [basicColmenas] = await pool.execute('SELECT * FROM colmena LIMIT 5');
+        console.log('✅ Query básica exitosa:', basicColmenas);
+        
+        // Verificar si existe tabla apiario
+        console.log('Paso 2: Verificando tabla apiario');
+        const [apiarioTest] = await pool.execute('SELECT * FROM apiario LIMIT 1');
+        console.log('✅ Tabla apiario existe:', apiarioTest);
+        
+        // Probar JOIN simple
+        console.log('Paso 3: Probando JOIN con apiario');
+        const [joinTest] = await pool.execute(`
+            SELECT c.id, c.nombre, a.nombre as apiario_nombre
+            FROM colmena c 
+            LEFT JOIN apiario a ON c.apiario_id = a.id 
+            LIMIT 1
+        `);
+        console.log('✅ JOIN con apiario exitoso:', joinTest);
+        
+        // Probar query completa
+        console.log('Paso 4: Query completa como en el código');
+        const [fullQuery] = await pool.execute(`
+            SELECT c.id, c.nombre, c.tipo, c.descripcion, c.dueno, c.apiario_id,
+                   c.fecha_instalacion, c.activa,
+                   a.nombre as apiario_nombre, 
+                   u.nombre as dueno_nombre, u.apellido as dueno_apellido
+            FROM colmena c 
+            LEFT JOIN apiario a ON c.apiario_id = a.id 
+            LEFT JOIN usuario u ON c.dueno = u.id 
+            ORDER BY c.fecha_instalacion DESC
+            LIMIT 5
+        `);
+        console.log('✅ Query completa exitosa:', fullQuery);
+        
+        res.json({
+            basic_colmenas: basicColmenas,
+            apiario_test: apiarioTest,
+            join_test: joinTest,
+            full_query: fullQuery
+        });
+        
+    } catch (error) {
+        console.error('💥 Error en debug colmenas:', error);
+        res.status(500).json({ 
+            error: error.message,
+            sql: error.sql,
+            errno: error.errno,
+            sqlState: error.sqlState,
+            sqlMessage: error.sqlMessage
+        });
+    }
+});
 app.use(cors({
   origin: [
     'https://datos-github-io-gamma.vercel.app',
