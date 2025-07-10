@@ -528,8 +528,6 @@ app.delete('/api/colmenas/:id', async (req, res) => {
         res.status(500).json({ error: 'Error eliminando colmena' });
     }
 });
-
-// POST - Agregar ubicación a una colmena
 app.post('/api/colmenas/:id/ubicaciones', async (req, res) => {
     try {
         const { id } = req.params;
@@ -585,7 +583,10 @@ app.post('/api/colmenas/:id/ubicaciones', async (req, res) => {
             details: error.message 
         });
     }
-    app.get('/api/colmenas/:id/nodos', async (req, res) => {
+}); // ✅ CERRAR CORRECTAMENTE AQUÍ
+
+// GET - Obtener nodos asociados a una colmena específica
+app.get('/api/colmenas/:id/nodos', async (req, res) => {
     try {
         const { id } = req.params;
         
@@ -621,7 +622,7 @@ app.post('/api/colmenas/:id/ubicaciones', async (req, res) => {
     }
 });
 
-// OPCIONAL: También puedes agregar este endpoint para obtener ubicaciones específicas
+// GET - Obtener ubicaciones específicas de una colmena
 app.get('/api/colmenas/:id/ubicaciones', async (req, res) => {
     try {
         const { id } = req.params;
@@ -645,7 +646,6 @@ app.get('/api/colmenas/:id/ubicaciones', async (req, res) => {
             details: error.message 
         });
     }
-});
 });
 // =============================================
 // RUTAS PARA NODOS
