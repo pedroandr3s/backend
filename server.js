@@ -151,7 +151,7 @@ app.get('/api/usuarios', async (req, res) => {
             ORDER BY u.id ASC
         `);
         
-        // No exponer contraseñas
+        // CORREGIDO: Ahora incluimos tanto el rol (ID) como el rol_nombre
         const usuarios = rows.map(user => ({
             id: user.id,
             nombre: user.nombre,
@@ -159,10 +159,12 @@ app.get('/api/usuarios', async (req, res) => {
             email: user.nombre, // Usar nombre como email temporalmente
             telefono: '', // No existe en tu esquema
             fecha_registro: new Date().toISOString(), // Temporalmente
-            rol_nombre: user.rol_nombre || 'Usuario'
+            rol: user.rol, // ✅ AGREGADO: ID del rol (1, 2, 3)
+            rol_nombre: user.rol_nombre || 'Usuario' // ✅ MANTENIDO: Nombre del rol
         }));
         
         console.log('✅ Usuarios obtenidos:', usuarios.length);
+        console.log('🔍 Primer usuario con rol:', usuarios[0]); // Debug
         res.json(usuarios);
     } catch (error) {
         console.error('💥 Error obteniendo usuarios:', error);
