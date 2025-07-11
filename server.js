@@ -1343,7 +1343,7 @@ const startServer = async () => {
         console.log('✅ Conexión exitosa a Railway MySQL');
         connection.release();
         
-        app.listen(PORT, () => {
+        app.listen(PORT, async () => {
             console.log(`🚀 Servidor SmartBee ejecutándose en puerto ${PORT}`);
             console.log(`🌐 API disponible en: http://localhost:${PORT}/api`);
             console.log(`🗄️  Base de datos: Railway MySQL`);
@@ -1358,6 +1358,14 @@ const startServer = async () => {
             console.log(`   ✅ GET  /api/dashboard/stats`);
             console.log(`   ✅ GET  /api/roles`);
             console.log(`   ✅ GET  /api/debug/estructura`);
+            console.log(`   ✅ GET  /api/auto-generation/status`);
+            console.log(`   ✅ POST /api/auto-generation/generate`);
+            console.log(`   ✅ POST /api/auto-generation/reinitialize`);
+            
+            // Iniciar sistema de generación automática
+            console.log('');
+            console.log('🤖 Iniciando sistema de generación automática...');
+            await startAutoGeneration();
         });
     } catch (error) {
         console.error('❌ Error conectando a Railway:', error.message);
@@ -1371,16 +1379,28 @@ const startServer = async () => {
 
 startServer();
 
+// =============================================
+// MANEJADORES DE CIERRE DEL SERVIDOR
+// =============================================
+
 process.on('SIGINT', async () => {
     console.log('\n🔄 Cerrando servidor...');
+    console.log('🛑 Deteniendo sistema de generación automática...');
+    stopAutoGeneration();
+    console.log('💾 Cerrando conexión a base de datos...');
     await pool.end();
     console.log('✅ Pool de conexiones cerrado');
+    console.log('👋 Servidor cerrado correctamente');
     process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
     console.log('\n🔄 Cerrando servidor...');
+    console.log('🛑 Deteniendo sistema de generación automática...');
+    stopAutoGeneration();
+    console.log('💾 Cerrando conexión a base de datos...');
     await pool.end();
     console.log('✅ Pool de conexiones cerrado');
+    console.log('👋 Servidor cerrado correctamente');
     process.exit(0);
 });
