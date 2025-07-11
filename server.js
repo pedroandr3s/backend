@@ -1333,74 +1333,297 @@ app.use('*', (req, res) => {
 });
 
 // =============================================
-// INICIAR SERVIDOR
+// SISTEMA DE GENERACIÓN AUTOMÁTICA DE DATOS
+// AGREGAR ESTE CÓDIGO COMPLETO ANTES DE LA FUNCIÓN startServer()
 // =============================================
 
-const startServer = async () => {
+// Variables globales para el sistema de generación automática
+let autoGenerationInterval = null;
+let lastGeneratedValues = new Map(); // Almacenar últimos valores por nodo/tópico
+
+// Función para extraer valor numérico del payload
+const extractNumericValue = (payload) => {
+    const match = payload.match(/(\d+\.?\d*)/);
+    return match ? parseFloat(match[1]) : null;
+};
+
+// Función para inicializar valores base desde la base de datos
+const initializeBaseValues = async () => {
     try {
-        console.log('🔄 Probando conexión a Railway...');
-        const connection = await pool.getConnection();
-        console.log('✅ Conexión exitosa a Railway MySQL');
-        connection.release();
+        console.log('🔄 Inicializando valores base para generación automática...');
         
-        app.listen(PORT, async () => {
-            console.log(`🚀 Servidor SmartBee ejecutándose en puerto ${PORT}`);
-            console.log(`🌐 API disponible en: http://localhost:${PORT}/api`);
-            console.log(`🗄️  Base de datos: Railway MySQL`);
-            console.log(`📋 Endpoints disponibles:`);
-            console.log(`   ✅ GET  /api/health`);
-            console.log(`   ✅ GET  /api/test-db`);
-            console.log(`   ✅ POST /api/usuarios/login`);
-            console.log(`   ✅ GET  /api/usuarios`);
-            console.log(`   ✅ GET  /api/colmenas`);
-            console.log(`   ✅ GET  /api/nodos`);
-            console.log(`   ✅ GET  /api/mensajes/recientes`);
-            console.log(`   ✅ GET  /api/dashboard/stats`);
-            console.log(`   ✅ GET  /api/roles`);
-            console.log(`   ✅ GET  /api/debug/estructura`);
-            console.log(`   ✅ GET  /api/auto-generation/status`);
-            console.log(`   ✅ POST /api/auto-generation/generate`);
-            console.log(`   ✅ POST /api/auto-generation/reinitialize`);
+        const [mensajes] = await pool.execute(`
+            SELECT DISTINCT m.nodo_id, m.topico, m.payload, m.fecha
+            FROM mensaje m
+            INNER JOIN (
+                SELECT nodo_id, topico, MAX(fecha) as max_fecha
+                FROM mensaje
+                GROUP BY nodo_id, topico
+            ) latest ON m.nodo_id = latest.nodo_id 
+                AND m.topico = latest.topico 
+                AND m.fecha = latest.max_fecha
+            ORDER BY m.fecha DESC
+        `);
+
+        const baseValues = new Map();
+        
+        mensajes.forEach(mensaje => {
+            const numericValue = extractNumericValue(mensaje.payload);
+            if (numericValue !== null) {
+                const key = `${mensaje.topico}_${mensaje.nodo_id}`;
+                baseValues.set(key, {
+                    nodo_id: mensaje.nodo_id,
+                    topico: mensaje.topico,
+                    value: numericValue,
+                    lastUpdate: new Date(mensaje.fecha)
+                });
+            }
+        });
+
+        // Si no hay datos, crear algunos valores por defecto
+        if (baseValues.size === 0) {
+            console.log('⚠️ No hay datos existentes, creando valores por defecto...');
             
-            // Iniciar sistema de generación automática
-            console.log('');
-            console.log('🤖 Iniciando sistema de generación automática...');
-            await startAutoGeneration();
-        });
-    } catch (error) {
-        console.error('❌ Error conectando a Railway:', error.message);
+            // Obtener nodos disponibles
+            const [nodos] = await pool.execute('SELECT id FROM nodo ORDER BY id LIMIT 3');
+            
+            if (nodos.length > 0) {
+                const defaultValues = [
+                    { topico: 'temperatura', value: 25.0 },
+                    { topico: 'humedad', value: 60.0 },
+                    { topico: 'presion', value: 1013.0 }
+                ];
+
+                for (let i = 0; i < Math.min(nodos.length, defaultValues.length); i++) {
+                    const nodo = nodos[i];
+                    const defaultVal = defaultValues[i];
+                    const key = `${defaultVal.topico}_${nodo.id}`;
+                    
+                    baseValues.set(key, {
+                        nodo_id: nodo.id,
+                        topico: defaultVal.topico,
+                        value: defaultVal.value,
+                        lastUpdate: new Date()
+                    });
+                }
+            }
+        }
+
+        lastGeneratedValues = baseValues;
+        console.log(`✅ Valores base inicializados: ${baseValues.size} combinaciones nodo/tópico`);
         
-        app.listen(PORT, () => {
-            console.log(`🚀 Servidor SmartBee (modo desarrollo) en puerto ${PORT}`);
-            console.log(`⚠️  Sin conexión a base de datos`);
+        // Log de valores inicializados
+        baseValues.forEach((data, key) => {
+            console.log(`📊 ${key}: ${data.value} (Nodo ${data.nodo_id})`);
         });
+
+        return baseValues;
+    } catch (error) {
+        console.error('❌ Error inicializando valores base:', error);
+        return new Map();
     }
 };
 
-startServer();
+// Función para generar nuevos datos con variación
+const generateNewData = async () => {
+    try {
+        console.log('🎲 Generando nuevos datos automáticamente...');
+        
+        if (lastGeneratedValues.size === 0) {
+            console.log('⚠️ No hay valores base, inicializando...');
+            await initializeBaseValues();
+        }
+
+        if (lastGeneratedValues.size === 0) {
+            console.log('❌ No se pudieron inicializar valores base');
+            return;
+        }
+
+        const promises = Array.from(lastGeneratedValues.entries()).map(async ([key, data]) => {
+            // Variación del ±15% para hacer más interesante
+            const variation = (Math.random() - 0.5) * 0.3; // -0.15 a +0.15 (±15%)
+            const newValue = Math.max(0, data.value * (1 + variation));
+            
+            // Formatear según el tipo de tópico
+            let newPayload;
+            switch (data.topico.toLowerCase()) {
+                case 'temperatura':
+                    // Rango realista: 5°C a 45°C
+                    const tempValue = Math.max(5, Math.min(45, newValue));
+                    newPayload = `${tempValue.toFixed(1)}°C`;
+                    break;
+                case 'humedad':
+                    // Rango realista: 20% a 95%
+                    const humValue = Math.max(20, Math.min(95, newValue));
+                    newPayload = `${Math.round(humValue)}%`;
+                    break;
+                case 'presion':
+                    // Rango realista: 980 hPa a 1040 hPa
+                    const presValue = Math.max(980, Math.min(1040, newValue));
+                    newPayload = `${presValue.toFixed(0)} hPa`;
+                    break;
+                case 'luz':
+                    // Rango: 0 a 1000 lux
+                    const luzValue = Math.max(0, Math.min(1000, newValue));
+                    newPayload = `${luzValue.toFixed(0)} lux`;
+                    break;
+                case 'sonido':
+                    // Rango: 30 a 120 dB
+                    const sonidoValue = Math.max(30, Math.min(120, newValue));
+                    newPayload = `${sonidoValue.toFixed(1)} dB`;
+                    break;
+                default:
+                    newPayload = newValue.toFixed(1);
+            }
+
+            console.log(`📝 Generando: Nodo ${data.nodo_id}, ${data.topico}: ${newPayload}`);
+
+            // Insertar en la base de datos
+            await pool.execute(`
+                INSERT INTO mensaje (nodo_id, topico, payload) 
+                VALUES (?, ?, ?)
+            `, [data.nodo_id, data.topico, newPayload]);
+
+            // Actualizar valor para la próxima generación
+            lastGeneratedValues.set(key, {
+                ...data,
+                value: newValue,
+                lastUpdate: new Date()
+            });
+
+            return { key, value: newValue, payload: newPayload };
+        });
+
+        const results = await Promise.all(promises);
+        
+        const now = new Date();
+        console.log(`✅ Datos generados exitosamente a las ${now.toLocaleTimeString()}: ${results.length} mensajes`);
+        
+        // Log resumen
+        results.forEach(({ key, payload }) => {
+            console.log(`   📊 ${key}: ${payload}`);
+        });
+
+        return results;
+    } catch (error) {
+        console.error('❌ Error generando datos automáticamente:', error);
+    }
+};
+
+// Función para calcular tiempo hasta la próxima hora cerrada
+const getTimeToNextHour = () => {
+    const now = new Date();
+    const nextHour = new Date(now);
+    nextHour.setHours(now.getHours() + 1, 0, 0, 0); // Próxima hora en punto
+    return nextHour - now;
+};
+
+// Función para iniciar el sistema de generación automática
+const startAutoGeneration = async () => {
+    try {
+        console.log('🚀 Iniciando sistema de generación automática de datos...');
+        
+        // Inicializar valores base
+        await initializeBaseValues();
+        
+        // Calcular tiempo hasta la próxima hora cerrada
+        const timeToNextHour = getTimeToNextHour();
+        const nextHourTime = new Date(Date.now() + timeToNextHour);
+        
+        console.log(`⏰ Próxima generación de datos: ${nextHourTime.toLocaleString()}`);
+        console.log(`⌛ Tiempo restante: ${Math.round(timeToNextHour / 1000 / 60)} minutos`);
+        
+        // Generar datos inmediatamente para prueba
+        console.log('🧪 Generando datos iniciales para prueba...');
+        await generateNewData();
+        
+        // Configurar timeout para la próxima hora cerrada
+        setTimeout(() => {
+            // Ejecutar inmediatamente cuando llegue la hora
+            generateNewData();
+            
+            // Después configurar intervalo cada hora
+            autoGenerationInterval = setInterval(() => {
+                const now = new Date();
+                console.log(`🕐 Hora cerrada alcanzada: ${now.toLocaleString()}`);
+                generateNewData();
+            }, 60 * 60 * 1000); // 1 hora en milisegundos
+            
+            console.log('✅ Sistema de generación automática configurado (cada hora)');
+        }, timeToNextHour);
+        
+        console.log('✅ Sistema de generación automática iniciado correctamente');
+        
+    } catch (error) {
+        console.error('❌ Error iniciando sistema de generación automática:', error);
+    }
+};
+
+// Función para detener el sistema de generación automática
+const stopAutoGeneration = () => {
+    if (autoGenerationInterval) {
+        clearInterval(autoGenerationInterval);
+        autoGenerationInterval = null;
+        console.log('🛑 Sistema de generación automática detenido');
+    }
+};
 
 // =============================================
-// MANEJADORES DE CIERRE DEL SERVIDOR
+// ENDPOINTS DE CONTROL DEL SISTEMA AUTOMÁTICO
 // =============================================
 
-process.on('SIGINT', async () => {
-    console.log('\n🔄 Cerrando servidor...');
-    console.log('🛑 Deteniendo sistema de generación automática...');
-    stopAutoGeneration();
-    console.log('💾 Cerrando conexión a base de datos...');
-    await pool.end();
-    console.log('✅ Pool de conexiones cerrado');
-    console.log('👋 Servidor cerrado correctamente');
-    process.exit(0);
+// Endpoint para controlar la generación automática (opcional, para debug)
+app.get('/api/auto-generation/status', (req, res) => {
+    const isRunning = autoGenerationInterval !== null;
+    const nextHour = new Date();
+    nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+    
+    res.json({
+        isRunning,
+        lastGeneratedValuesCount: lastGeneratedValues.size,
+        nextScheduledGeneration: nextHour.toISOString(),
+        currentTime: new Date().toISOString()
+    });
 });
 
-process.on('SIGTERM', async () => {
-    console.log('\n🔄 Cerrando servidor...');
-    console.log('🛑 Deteniendo sistema de generación automática...');
-    stopAutoGeneration();
-    console.log('💾 Cerrando conexión a base de datos...');
-    await pool.end();
-    console.log('✅ Pool de conexiones cerrado');
-    console.log('👋 Servidor cerrado correctamente');
-    process.exit(0);
+// Endpoint para forzar generación manual (para testing)
+app.post('/api/auto-generation/generate', async (req, res) => {
+    try {
+        console.log('🔧 Generación manual solicitada via API');
+        const results = await generateNewData();
+        res.json({
+            success: true,
+            message: 'Datos generados exitosamente',
+            generatedCount: results ? results.length : 0,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Error en generación manual:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error generando datos',
+            details: error.message
+        });
+    }
+});
+
+// Endpoint para reinicializar valores base
+app.post('/api/auto-generation/reinitialize', async (req, res) => {
+    try {
+        console.log('🔄 Reinicialización de valores base solicitada');
+        const baseValues = await initializeBaseValues();
+        res.json({
+            success: true,
+            message: 'Valores base reinicializados',
+            valuesCount: baseValues.size,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Error reinicializando valores:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error reinicializando valores base',
+            details: error.message
+        });
+    }
 });
