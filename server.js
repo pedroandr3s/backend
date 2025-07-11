@@ -1048,6 +1048,295 @@ app.get('/api/mensajes/recientes', async (req, res) => {
         res.status(500).json({ error: 'Error obteniendo mensajes' });
     }
 });
+app.post('/api/mensajes', async (req, res) => {
+    try {
+        const { nodo_id, topico, payload } = req.body;
+        
+        console.log('💬 Creando nuevo mensaje:', req.body);
+        
+        // Validar campos requeridos
+        if (!nodo_id || !topico || !payload) {
+            return res.status(400).json({ 
+                error: 'Nodo ID, tópico y payload son obligatorios' 
+            });
+        }
+        
+        // Verificar que el nodo existe
+        const [nodoExists] = await pool.execute('SELECT id FROM nodo WHERE id = ?', [nodo_id]);
+        if (nodoExists.length === 0) {
+            return res.status(400).json({ error: 'El nodo especificado no existe' });
+        }
+        
+        // Insertar nuevo mensaje
+        const [result] = await pool.execute(`
+            INSERT INTO mensaje (nodo_id, topico, payload) 
+            VALUES (?, ?, ?)
+        `, [parseInt(nodo_id), topico.trim(), payload.trim()]);
+        
+        console.log('✅ Mensaje creado exitosamente:', result.insertId);
+        
+        // Obtener el mensaje creado para devolverlo
+        const [newMessage] = await pool.execute(`
+            SELECT m.id, m.nodo_id, m.topico, m.payload, m.fecha,
+                   n.descripcion as nodo_descripcion
+            FROM mensaje m
+            LEFT JOIN nodo n ON m.nodo_id = n.id
+            WHERE m.id = ?
+        `, [result.insertId]);
+        
+        const mensaje = {
+            id: newMessage[0].id,
+            nodo_id: newMessage[0].nodo_id,
+            nodo_identificador: newMessage[0].nodo_descripcion,
+            topico: newMessage[0].topico,
+            payload: newMessage[0].payload,
+            fecha: newMessage[0].fecha
+        };
+        
+        res.status(201).json({ 
+            id: result.insertId,
+            message: 'Mensaje creado exitosamente',
+            mensaje: mensaje
+        });
+        
+    } catch (error) {
+        console.error('💥 Error creando mensaje:', error);
+        res.status(500).json({ 
+            error: 'Error creando mensaje',
+            details: process.env.NODE_ENV === 'development' ? error.message : 'Error interno'
+        });
+    }
+});
+
+// PUT - Actualizar mensaje
+app.put('/api/mensajes/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { nodo_id, topico, payload } = req.body;
+        
+        console.log(`✏️ Actualizando mensaje ${id}:`, req.body);
+        
+        // Verificar que el mensaje existe
+        const [messageExists] = await pool.execute('SELECT id FROM mensaje WHERE id = ?', [id]);
+        if (messageExists.length === 0) {
+            return res.status(404).json({ error: 'Mensaje no encontrado' });
+        }
+        
+        // Validar campos requeridos
+        if (!nodo_id || !topico || !payload) {
+            return res.status(400).json({ 
+                error: 'Nodo ID, tópico y payload son obligatorios' 
+            });
+        }
+        
+        // Verificar que el nodo existe
+        const [nodoExists] = await pool.execute('SELECT id FROM nodo WHERE id = ?', [nodo_id]);
+        if (nodoExists.length === 0) {
+            return res.status(400).json({ error: 'El nodo especificado no existe' });
+        }
+        
+        // Actualizar mensaje
+        await pool.execute(`
+            UPDATE mensaje 
+            SET nodo_id = ?, topico = ?, payload = ?
+            WHERE id = ?
+        `, [parseInt(nodo_id), topico.trim(), payload.trim(), id]);
+        
+        console.log('✅ Mensaje actualizado:', id);
+        
+        // Obtener el mensaje actualizado para devolverlo
+        const [updatedMessage] = await pool.execute(`
+            SELECT m.id, m.nodo_id, m.topico, m.payload, m.fecha,
+                   n.descripcion as nodo_descripcion
+            FROM mensaje m
+            LEFT JOIN nodo n ON m.nodo_id = n.id
+            WHERE m.id = ?
+        `, [id]);
+        
+        const mensaje = {
+            id: updatedMessage[0].id,
+            nodo_id: updatedMessage[0].nodo_id,
+            nodo_identificador: updatedMessage[0].nodo_descripcion,
+            topico: updatedMessage[0].topico,
+            payload: updatedMessage[0].payload,
+            fecha: updatedMessage[0].fecha
+        };
+        
+        res.json({ 
+            message: 'Mensaje actualizado correctamente',
+            mensaje: mensaje
+        });
+        
+    } catch (error) {
+        console.error('💥 Error actualizando mensaje:', error);
+        res.status(500).json({ 
+            error: 'Error actualizando mensaje',
+            details: process.env.NODE_ENV === 'development' ? error.message : 'Error interno'
+        });
+    }
+});
+
+// DELETE - Eliminar mensaje
+app.delete('/api/mensajes/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        console.log(`🗑️ Eliminando mensaje ${id}`);
+        
+        // Verificar que el mensaje existe
+        const [messageExists] = await pool.execute(
+            'SELECT id, topico, payload FROM mensaje WHERE id = ?', 
+            [id]
+        );
+        if (messageExists.length === 0) {
+            return res.status(404).json({ error: 'Mensaje no encontrado' });
+        }
+        
+        const mensaje = messageExists[0];
+        
+        // Eliminar mensaje
+        await pool.execute('DELETE FROM mensaje WHERE id = ?', [id]);
+        
+        console.log('✅ Mensaje eliminado:', id);
+        res.json({ 
+            message: `Mensaje "${mensaje.topico}: ${mensaje.payload}" eliminado correctamente`,
+            id: parseInt(id)
+        });
+        
+    } catch (error) {
+        console.error('💥 Error eliminando mensaje:', error);
+        res.status(500).json({ 
+            error: 'Error eliminando mensaje',
+            details: process.env.NODE_ENV === 'development' ? error.message : 'Error interno'
+        });
+    }
+});
+
+// GET - Obtener un mensaje específico (opcional, útil para debug)
+app.get('/api/mensajes/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        console.log(`🔍 Obteniendo mensaje ${id}`);
+        
+        const [rows] = await pool.execute(`
+            SELECT m.id, m.nodo_id, m.topico, m.payload, m.fecha,
+                   n.descripcion as nodo_descripcion
+            FROM mensaje m
+            LEFT JOIN nodo n ON m.nodo_id = n.id
+            WHERE m.id = ?
+        `, [id]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Mensaje no encontrado' });
+        }
+        
+        const mensaje = {
+            id: rows[0].id,
+            nodo_id: rows[0].nodo_id,
+            nodo_identificador: rows[0].nodo_descripcion,
+            topico: rows[0].topico,
+            payload: rows[0].payload,
+            fecha: rows[0].fecha
+        };
+        
+        console.log('✅ Mensaje obtenido:', mensaje);
+        res.json(mensaje);
+        
+    } catch (error) {
+        console.error('💥 Error obteniendo mensaje:', error);
+        res.status(500).json({ error: 'Error obteniendo mensaje' });
+    }
+});
+
+// GET - Obtener mensajes con paginación y filtros (mejorado)
+app.get('/api/mensajes', async (req, res) => {
+    try {
+        const { 
+            page = 1, 
+            limit = 50, 
+            nodo_id, 
+            topico, 
+            fecha_inicio, 
+            fecha_fin 
+        } = req.query;
+        
+        console.log('💬 Obteniendo mensajes con filtros:', req.query);
+        
+        let whereClause = '1=1';
+        let queryParams = [];
+        
+        // Aplicar filtros
+        if (nodo_id) {
+            whereClause += ' AND m.nodo_id = ?';
+            queryParams.push(parseInt(nodo_id));
+        }
+        
+        if (topico) {
+            whereClause += ' AND m.topico LIKE ?';
+            queryParams.push(`%${topico}%`);
+        }
+        
+        if (fecha_inicio) {
+            whereClause += ' AND m.fecha >= ?';
+            queryParams.push(fecha_inicio);
+        }
+        
+        if (fecha_fin) {
+            whereClause += ' AND m.fecha <= ?';
+            queryParams.push(fecha_fin + ' 23:59:59');
+        }
+        
+        // Calcular offset para paginación
+        const offset = (parseInt(page) - 1) * parseInt(limit);
+        queryParams.push(parseInt(limit), offset);
+        
+        const [rows] = await pool.execute(`
+            SELECT m.id, m.nodo_id, m.topico, m.payload, m.fecha,
+                   n.descripcion as nodo_descripcion
+            FROM mensaje m
+            LEFT JOIN nodo n ON m.nodo_id = n.id
+            WHERE ${whereClause}
+            ORDER BY m.fecha DESC
+            LIMIT ? OFFSET ?
+        `, queryParams);
+        
+        // Obtener total de registros para paginación
+        const [countResult] = await pool.execute(`
+            SELECT COUNT(*) as total
+            FROM mensaje m
+            WHERE ${whereClause}
+        `, queryParams.slice(0, -2)); // Remover limit y offset del conteo
+        
+        // Formatear para frontend
+        const mensajes = rows.map(mensaje => ({
+            id: mensaje.id,
+            nodo_id: mensaje.nodo_id,
+            nodo_identificador: mensaje.nodo_descripcion,
+            topico: mensaje.topico,
+            payload: mensaje.payload,
+            fecha: mensaje.fecha
+        }));
+        
+        const totalRecords = countResult[0].total;
+        const totalPages = Math.ceil(totalRecords / parseInt(limit));
+        
+        console.log('✅ Mensajes obtenidos:', mensajes.length);
+        res.json({
+            data: mensajes,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total: totalRecords,
+                pages: totalPages
+            }
+        });
+        
+    } catch (error) {
+        console.error('💥 Error obteniendo mensajes:', error);
+        res.status(500).json({ error: 'Error obteniendo mensajes' });
+    }
+});
 
 // =============================================
 // RUTAS PARA DASHBOARD
