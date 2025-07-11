@@ -1048,138 +1048,7 @@ app.get('/api/mensajes/recientes', async (req, res) => {
         res.status(500).json({ error: 'Error obteniendo mensajes' });
     }
 });
-app.post('/api/mensajes', async (req, res) => {
-    try {
-        const { nodo_id, topico, payload } = req.body;
-        
-        console.log('💬 Creando nuevo mensaje:', req.body);
-        
-        // Validar campos requeridos
-        if (!nodo_id || !topico || !payload) {
-            return res.status(400).json({ 
-                error: 'Nodo ID, tópico y payload son obligatorios' 
-            });
-        }
-        
-        // Verificar que el nodo existe
-        const [nodoExists] = await pool.execute('SELECT id FROM nodo WHERE id = ?', [nodo_id]);
-        if (nodoExists.length === 0) {
-            return res.status(400).json({ error: 'El nodo especificado no existe' });
-        }
-        
-        // Insertar nuevo mensaje
-        const [result] = await pool.execute(`
-            INSERT INTO mensaje (nodo_id, topico, payload) 
-            VALUES (?, ?, ?)
-        `, [parseInt(nodo_id), topico.trim(), payload.trim()]);
-        
-        console.log('✅ Mensaje creado exitosamente:', result.insertId);
-        
-        // Obtener el mensaje creado para devolverlo
-        const [newMessage] = await pool.execute(`
-            SELECT m.id, m.nodo_id, m.topico, m.payload, m.fecha,
-                   n.descripcion as nodo_descripcion
-            FROM mensaje m
-            LEFT JOIN nodo n ON m.nodo_id = n.id
-            WHERE m.id = ?
-        `, [result.insertId]);
-        
-        const mensaje = {
-            id: newMessage[0].id,
-            nodo_id: newMessage[0].nodo_id,
-            nodo_identificador: newMessage[0].nodo_descripcion,
-            topico: newMessage[0].topico,
-            payload: newMessage[0].payload,
-            fecha: newMessage[0].fecha
-        };
-        
-        res.status(201).json({ 
-            id: result.insertId,
-            message: 'Mensaje creado exitosamente',
-            mensaje: mensaje
-        });
-        
-    } catch (error) {
-        console.error('💥 Error creando mensaje:', error);
-        res.status(500).json({ 
-            error: 'Error creando mensaje',
-            details: process.env.NODE_ENV === 'development' ? error.message : 'Error interno'
-        });
-    }
-});
 
-// DELETE - Eliminar mensaje
-app.delete('/api/mensajes/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        console.log(`🗑️ Eliminando mensaje ${id}`);
-        
-        // Verificar que el mensaje existe
-        const [messageExists] = await pool.execute(
-            'SELECT id, topico, payload FROM mensaje WHERE id = ?', 
-            [id]
-        );
-        if (messageExists.length === 0) {
-            return res.status(404).json({ error: 'Mensaje no encontrado' });
-        }
-        
-        const mensaje = messageExists[0];
-        
-        // Eliminar mensaje
-        await pool.execute('DELETE FROM mensaje WHERE id = ?', [id]);
-        
-        console.log('✅ Mensaje eliminado:', id);
-        res.json({ 
-            message: `Mensaje "${mensaje.topico}: ${mensaje.payload}" eliminado correctamente`,
-            id: parseInt(id)
-        });
-        
-    } catch (error) {
-        console.error('💥 Error eliminando mensaje:', error);
-        res.status(500).json({ 
-            error: 'Error eliminando mensaje',
-            details: process.env.NODE_ENV === 'development' ? error.message : 'Error interno'
-        });
-    }
-});
-
-// GET - Obtener un mensaje específico (opcional, útil para debug)
-app.get('/api/mensajes/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        console.log(`🔍 Obteniendo mensaje ${id}`);
-        
-        const [rows] = await pool.execute(`
-            SELECT m.id, m.nodo_id, m.topico, m.payload, m.fecha,
-                   n.descripcion as nodo_descripcion
-            FROM mensaje m
-            LEFT JOIN nodo n ON m.nodo_id = n.id
-            WHERE m.id = ?
-        `, [id]);
-        
-        if (rows.length === 0) {
-            return res.status(404).json({ error: 'Mensaje no encontrado' });
-        }
-        
-        const mensaje = {
-            id: rows[0].id,
-            nodo_id: rows[0].nodo_id,
-            nodo_identificador: rows[0].nodo_descripcion,
-            topico: rows[0].topico,
-            payload: rows[0].payload,
-            fecha: rows[0].fecha
-        };
-        
-        console.log('✅ Mensaje obtenido:', mensaje);
-        res.json(mensaje);
-        
-    } catch (error) {
-        console.error('💥 Error obteniendo mensaje:', error);
-        res.status(500).json({ error: 'Error obteniendo mensaje' });
-    }
-});
 
 // =============================================
 // RUTAS PARA DASHBOARD
@@ -1333,297 +1202,54 @@ app.use('*', (req, res) => {
 });
 
 // =============================================
-// SISTEMA DE GENERACIÓN AUTOMÁTICA DE DATOS
-// AGREGAR ESTE CÓDIGO COMPLETO ANTES DE LA FUNCIÓN startServer()
+// INICIAR SERVIDOR
 // =============================================
 
-// Variables globales para el sistema de generación automática
-let autoGenerationInterval = null;
-let lastGeneratedValues = new Map(); // Almacenar últimos valores por nodo/tópico
-
-// Función para extraer valor numérico del payload
-const extractNumericValue = (payload) => {
-    const match = payload.match(/(\d+\.?\d*)/);
-    return match ? parseFloat(match[1]) : null;
-};
-
-// Función para inicializar valores base desde la base de datos
-const initializeBaseValues = async () => {
+const startServer = async () => {
     try {
-        console.log('🔄 Inicializando valores base para generación automática...');
+        console.log('🔄 Probando conexión a Railway...');
+        const connection = await pool.getConnection();
+        console.log('✅ Conexión exitosa a Railway MySQL');
+        connection.release();
         
-        const [mensajes] = await pool.execute(`
-            SELECT DISTINCT m.nodo_id, m.topico, m.payload, m.fecha
-            FROM mensaje m
-            INNER JOIN (
-                SELECT nodo_id, topico, MAX(fecha) as max_fecha
-                FROM mensaje
-                GROUP BY nodo_id, topico
-            ) latest ON m.nodo_id = latest.nodo_id 
-                AND m.topico = latest.topico 
-                AND m.fecha = latest.max_fecha
-            ORDER BY m.fecha DESC
-        `);
-
-        const baseValues = new Map();
-        
-        mensajes.forEach(mensaje => {
-            const numericValue = extractNumericValue(mensaje.payload);
-            if (numericValue !== null) {
-                const key = `${mensaje.topico}_${mensaje.nodo_id}`;
-                baseValues.set(key, {
-                    nodo_id: mensaje.nodo_id,
-                    topico: mensaje.topico,
-                    value: numericValue,
-                    lastUpdate: new Date(mensaje.fecha)
-                });
-            }
+        app.listen(PORT, () => {
+            console.log(`🚀 Servidor SmartBee ejecutándose en puerto ${PORT}`);
+            console.log(`🌐 API disponible en: http://localhost:${PORT}/api`);
+            console.log(`🗄️  Base de datos: Railway MySQL`);
+            console.log(`📋 Endpoints disponibles:`);
+            console.log(`   ✅ GET  /api/health`);
+            console.log(`   ✅ GET  /api/test-db`);
+            console.log(`   ✅ POST /api/usuarios/login`);
+            console.log(`   ✅ GET  /api/usuarios`);
+            console.log(`   ✅ GET  /api/colmenas`);
+            console.log(`   ✅ GET  /api/nodos`);
+            console.log(`   ✅ GET  /api/mensajes/recientes`);
+            console.log(`   ✅ GET  /api/dashboard/stats`);
+            console.log(`   ✅ GET  /api/roles`);
+            console.log(`   ✅ GET  /api/debug/estructura`);
         });
-
-        // Si no hay datos, crear algunos valores por defecto
-        if (baseValues.size === 0) {
-            console.log('⚠️ No hay datos existentes, creando valores por defecto...');
-            
-            // Obtener nodos disponibles
-            const [nodos] = await pool.execute('SELECT id FROM nodo ORDER BY id LIMIT 3');
-            
-            if (nodos.length > 0) {
-                const defaultValues = [
-                    { topico: 'temperatura', value: 25.0 },
-                    { topico: 'humedad', value: 60.0 },
-                    { topico: 'presion', value: 1013.0 }
-                ];
-
-                for (let i = 0; i < Math.min(nodos.length, defaultValues.length); i++) {
-                    const nodo = nodos[i];
-                    const defaultVal = defaultValues[i];
-                    const key = `${defaultVal.topico}_${nodo.id}`;
-                    
-                    baseValues.set(key, {
-                        nodo_id: nodo.id,
-                        topico: defaultVal.topico,
-                        value: defaultVal.value,
-                        lastUpdate: new Date()
-                    });
-                }
-            }
-        }
-
-        lastGeneratedValues = baseValues;
-        console.log(`✅ Valores base inicializados: ${baseValues.size} combinaciones nodo/tópico`);
-        
-        // Log de valores inicializados
-        baseValues.forEach((data, key) => {
-            console.log(`📊 ${key}: ${data.value} (Nodo ${data.nodo_id})`);
-        });
-
-        return baseValues;
     } catch (error) {
-        console.error('❌ Error inicializando valores base:', error);
-        return new Map();
-    }
-};
-
-// Función para generar nuevos datos con variación
-const generateNewData = async () => {
-    try {
-        console.log('🎲 Generando nuevos datos automáticamente...');
+        console.error('❌ Error conectando a Railway:', error.message);
         
-        if (lastGeneratedValues.size === 0) {
-            console.log('⚠️ No hay valores base, inicializando...');
-            await initializeBaseValues();
-        }
-
-        if (lastGeneratedValues.size === 0) {
-            console.log('❌ No se pudieron inicializar valores base');
-            return;
-        }
-
-        const promises = Array.from(lastGeneratedValues.entries()).map(async ([key, data]) => {
-            // Variación del ±15% para hacer más interesante
-            const variation = (Math.random() - 0.5) * 0.3; // -0.15 a +0.15 (±15%)
-            const newValue = Math.max(0, data.value * (1 + variation));
-            
-            // Formatear según el tipo de tópico
-            let newPayload;
-            switch (data.topico.toLowerCase()) {
-                case 'temperatura':
-                    // Rango realista: 5°C a 45°C
-                    const tempValue = Math.max(5, Math.min(45, newValue));
-                    newPayload = `${tempValue.toFixed(1)}°C`;
-                    break;
-                case 'humedad':
-                    // Rango realista: 20% a 95%
-                    const humValue = Math.max(20, Math.min(95, newValue));
-                    newPayload = `${Math.round(humValue)}%`;
-                    break;
-                case 'presion':
-                    // Rango realista: 980 hPa a 1040 hPa
-                    const presValue = Math.max(980, Math.min(1040, newValue));
-                    newPayload = `${presValue.toFixed(0)} hPa`;
-                    break;
-                case 'luz':
-                    // Rango: 0 a 1000 lux
-                    const luzValue = Math.max(0, Math.min(1000, newValue));
-                    newPayload = `${luzValue.toFixed(0)} lux`;
-                    break;
-                case 'sonido':
-                    // Rango: 30 a 120 dB
-                    const sonidoValue = Math.max(30, Math.min(120, newValue));
-                    newPayload = `${sonidoValue.toFixed(1)} dB`;
-                    break;
-                default:
-                    newPayload = newValue.toFixed(1);
-            }
-
-            console.log(`📝 Generando: Nodo ${data.nodo_id}, ${data.topico}: ${newPayload}`);
-
-            // Insertar en la base de datos
-            await pool.execute(`
-                INSERT INTO mensaje (nodo_id, topico, payload) 
-                VALUES (?, ?, ?)
-            `, [data.nodo_id, data.topico, newPayload]);
-
-            // Actualizar valor para la próxima generación
-            lastGeneratedValues.set(key, {
-                ...data,
-                value: newValue,
-                lastUpdate: new Date()
-            });
-
-            return { key, value: newValue, payload: newPayload };
+        app.listen(PORT, () => {
+            console.log(`🚀 Servidor SmartBee (modo desarrollo) en puerto ${PORT}`);
+            console.log(`⚠️  Sin conexión a base de datos`);
         });
-
-        const results = await Promise.all(promises);
-        
-        const now = new Date();
-        console.log(`✅ Datos generados exitosamente a las ${now.toLocaleTimeString()}: ${results.length} mensajes`);
-        
-        // Log resumen
-        results.forEach(({ key, payload }) => {
-            console.log(`   📊 ${key}: ${payload}`);
-        });
-
-        return results;
-    } catch (error) {
-        console.error('❌ Error generando datos automáticamente:', error);
     }
 };
 
-// Función para calcular tiempo hasta la próxima hora cerrada
-const getTimeToNextHour = () => {
-    const now = new Date();
-    const nextHour = new Date(now);
-    nextHour.setHours(now.getHours() + 1, 0, 0, 0); // Próxima hora en punto
-    return nextHour - now;
-};
+startServer();
 
-// Función para iniciar el sistema de generación automática
-const startAutoGeneration = async () => {
-    try {
-        console.log('🚀 Iniciando sistema de generación automática de datos...');
-        
-        // Inicializar valores base
-        await initializeBaseValues();
-        
-        // Calcular tiempo hasta la próxima hora cerrada
-        const timeToNextHour = getTimeToNextHour();
-        const nextHourTime = new Date(Date.now() + timeToNextHour);
-        
-        console.log(`⏰ Próxima generación de datos: ${nextHourTime.toLocaleString()}`);
-        console.log(`⌛ Tiempo restante: ${Math.round(timeToNextHour / 1000 / 60)} minutos`);
-        
-        // Generar datos inmediatamente para prueba
-        console.log('🧪 Generando datos iniciales para prueba...');
-        await generateNewData();
-        
-        // Configurar timeout para la próxima hora cerrada
-        setTimeout(() => {
-            // Ejecutar inmediatamente cuando llegue la hora
-            generateNewData();
-            
-            // Después configurar intervalo cada hora
-            autoGenerationInterval = setInterval(() => {
-                const now = new Date();
-                console.log(`🕐 Hora cerrada alcanzada: ${now.toLocaleString()}`);
-                generateNewData();
-            }, 60 * 60 * 1000); // 1 hora en milisegundos
-            
-            console.log('✅ Sistema de generación automática configurado (cada hora)');
-        }, timeToNextHour);
-        
-        console.log('✅ Sistema de generación automática iniciado correctamente');
-        
-    } catch (error) {
-        console.error('❌ Error iniciando sistema de generación automática:', error);
-    }
-};
-
-// Función para detener el sistema de generación automática
-const stopAutoGeneration = () => {
-    if (autoGenerationInterval) {
-        clearInterval(autoGenerationInterval);
-        autoGenerationInterval = null;
-        console.log('🛑 Sistema de generación automática detenido');
-    }
-};
-
-// =============================================
-// ENDPOINTS DE CONTROL DEL SISTEMA AUTOMÁTICO
-// =============================================
-
-// Endpoint para controlar la generación automática (opcional, para debug)
-app.get('/api/auto-generation/status', (req, res) => {
-    const isRunning = autoGenerationInterval !== null;
-    const nextHour = new Date();
-    nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
-    
-    res.json({
-        isRunning,
-        lastGeneratedValuesCount: lastGeneratedValues.size,
-        nextScheduledGeneration: nextHour.toISOString(),
-        currentTime: new Date().toISOString()
-    });
+process.on('SIGINT', async () => {
+    console.log('\n🔄 Cerrando servidor...');
+    await pool.end();
+    console.log('✅ Pool de conexiones cerrado');
+    process.exit(0);
 });
 
-// Endpoint para forzar generación manual (para testing)
-app.post('/api/auto-generation/generate', async (req, res) => {
-    try {
-        console.log('🔧 Generación manual solicitada via API');
-        const results = await generateNewData();
-        res.json({
-            success: true,
-            message: 'Datos generados exitosamente',
-            generatedCount: results ? results.length : 0,
-            timestamp: new Date().toISOString()
-        });
-    } catch (error) {
-        console.error('Error en generación manual:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Error generando datos',
-            details: error.message
-        });
-    }
-});
-
-// Endpoint para reinicializar valores base
-app.post('/api/auto-generation/reinitialize', async (req, res) => {
-    try {
-        console.log('🔄 Reinicialización de valores base solicitada');
-        const baseValues = await initializeBaseValues();
-        res.json({
-            success: true,
-            message: 'Valores base reinicializados',
-            valuesCount: baseValues.size,
-            timestamp: new Date().toISOString()
-        });
-    } catch (error) {
-        console.error('Error reinicializando valores:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Error reinicializando valores base',
-            details: error.message
-        });
-    }
+process.on('SIGTERM', async () => {
+    console.log('\n🔄 Cerrando servidor...');
+    await pool.end();
+    console.log('✅ Pool de conexiones cerrado');
+    process.exit(0);
 });
